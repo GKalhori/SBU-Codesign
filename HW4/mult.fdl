@@ -1,0 +1,95 @@
+dp multiplier ( in x : ns(6);
+				in y : ns(6);
+				in start : ns(1);
+				out result : ns(12);
+				out done : ns(1)){
+	#! intermediate signals
+    reg M, Q : ns(6);
+    reg product : ns(6);
+    reg counter : ns(3);
+
+	#! output in every clock (not valid in any clock)
+    always {
+        result = product #Q;
+    }
+
+    sfg init {
+        M = x;		#! multipucand
+        Q = y;		#! multiplier
+        product = 0;
+        done = 0;
+        counter = 6;
+        $display("x is = ", x, " y is ", y);
+    }
+
+    sfg add {
+        product = M + product;
+        done = 0;
+    }
+    
+    sfg shift {
+        Q = product[0] # Q[5:1];
+        product = 0 # product[5:1];
+        counter = counter - 1;
+        done = 0;
+    }
+
+	#! waiting for start signal to start operation
+    sfg IDLE {
+        done = 1;
+        $display("cycle is = ", $cycle, " result is = ", result);
+    }
+
+	#! for better transition between sfgs
+    sfg do_nothing {
+        done = 0;
+    }
+}
+
+fsm mul_ctl(multiplier) {
+    initial s0;
+    state s1, s2, s3, s4, s5;
+
+	#! based on controller FSM
+    @s0 (IDLE) -> s1;
+
+    @s1 if(start) then (init) -> s2;
+        else (do_nothing) -> s0;
+
+    @s2 if(Q[0]) then (add) -> s3;
+        else (shift) -> s4;
+
+    @s3 (shift) -> s4;
+
+	#! check if all the required levels are passed
+    @s4 if (counter == 0) then (do_nothing) -> s0;
+        else (do_nothing) -> s2;	#! go back to s2 in order to pass all the required levels 
+}
+
+dp TB(
+    out x, y : ns(6);
+    out start : ns(1))
+{
+    sfg s1 {
+        start = 1;
+        x = 2;
+        y = 7;
+    }
+}
+  
+hardwired TB_ctl(TB) {
+	s1;
+}
+
+dp sysmul {
+    sig x, y : ns(6);
+    sig result : ns(12);
+    sig start, done : ns(1);
+
+    use multiplier(x, y, start, result, done);
+    use TB(x, y, start);
+}
+
+system S {
+    sysmul;
+}
