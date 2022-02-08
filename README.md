@@ -1,2 +1,5 @@
 # SBU-Codesign
-Computer assignments of co-design course, fall 1400.
+HW4: Finite State Machine with Datapath
+HW5: Implementing a Micro-programmed Machine
+HW6: Implementing a System Using Hardware/Software Codesign (Cordic Algorithm)
+HW7: Implementing a System Using Hardware/Software Codesign (FIR Filter)
