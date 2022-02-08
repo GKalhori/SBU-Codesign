@@ -1,0 +1,179 @@
+// connection ports between hw & sw
+ipblock arm {
+	iptype "armsystem";
+	ipparm "exec = fir";
+}
+
+ipblock in_ready(out data : ns(1)) {
+	iptype "armsystemsource";
+	ipparm "core 	= arm";
+	ipparm "address = 0x80000000";
+}
+
+ipblock out_ready(in data : ns(1)) {
+	iptype "armsystemsink";
+	ipparm "core 	= arm";
+	ipparm "address = 0x80000004";
+}
+
+ipblock in_coef(in  idata   : tc(32);
+          	    out odata   : tc(32);
+          	    in  address : ns(10);
+          	    in  wr      : ns(1)) {
+	iptype "armbuffer";
+	ipparm "core 	= arm";
+	ipparm "address = 0x80000008";
+	ipparm "range 	= 0x10C";	// 67 * 32bit -> 268(0x10C)
+}
+
+ipblock out_res(in  idata   : tc(32);
+          	    out odata   : tc(32);
+          	    in  address : ns(10);
+          	    in  wr      : ns(1)) {
+	iptype "armbuffer";
+	ipparm "core 	= arm";
+	ipparm "address = 0x90000008";
+	ipparm "range 	= 0x1E0";	// 120 * 32bit -> 480 (0x1E0)
+}
+
+ipblock out_sign(in  idata   : ns(1);
+				 out odata   : tc(32);
+				 in  address : ns(10);
+				 in  wr      : ns(1)) {
+	iptype "armbuffer";
+	ipparm "core 	= arm";
+	ipparm "address = 0xA0000008";
+	ipparm "range 	= 0x1E0";
+}
+
+
+dp fir (in  in_status	:	ns(1);
+		in  coeff_val	:	tc(32);
+		out coeff_adr	:	ns(10);
+		out result_val	:	tc(32);
+		out result_adr	:	ns(10);
+		out result_wr	:	ns(1);
+		out sign_val	:	ns(1);
+		out sign_adr	:	ns(10);
+		out sign_wr		:	ns(1);
+		out out_status	:	ns(1)){
+		   
+	reg	input_ready		:  	ns(1);
+	reg output_i		:	tc(32);
+	reg coeff_adr_tmp	:	ns(10);
+	reg result_val_tmp	:	tc(32);
+	reg result_adr_tmp	:	ns(10);
+	reg result_wr_tmp	:	ns(1);
+	reg sign_val_tmp	:	ns(1);
+	reg sign_adr_tmp	:	ns(10);
+	reg sign_wr_tmp		:	ns(1);
+	reg output_ready	:	ns(1);
+	reg i				:	ns(7);
+	reg j				:	ns(7);
+	
+	lookup pulse 		: tc(32) = {-4, -2, 0, -4, -6, -4, -2, -4, -6, -6, -4, -4, -6, -6, -2, 6, 12, 8, 0, -16, -38, -60, -84, -90,-66,
+									-32, -4, 2, -4, 8, 12, 12, 10, 6, 6, 6, 4, 0, 0, 0, 0, 0, -2, -4, 0, 0, 0, -2, -2, 0, 0, -2, -2,-2,
+									-2, 0, -2, -4, -2, 0, -2, -4, -4, 2, 0, 0, -2, -4, -2, 0, 0, -2, -4, -2, 0, 0, -4, -4, -2, -2, -4,
+									-6, -6, -4, -4, 8, -10, -8, -6, -6, -8, -12, -10, -8, -8, -10, -12, -10, -8, -8, -10, -10, -8, -6,
+									-6, -8, -8, -4, -2, -4, -4, -4, 0, 0, -2, -4, -2, -2, 0, -4};
+
+	always{
+		input_ready = in_status;
+		coeff_adr 	= coeff_adr_tmp; 
+		result_val 	= result_val_tmp;
+		result_adr 	= result_adr_tmp;
+		result_wr 	= result_wr_tmp;
+		sign_val	= sign_val_tmp;
+		sign_adr	= sign_adr_tmp;
+		sign_wr		= sign_wr_tmp;
+		out_status 	= output_ready;	
+	}
+
+	sfg init{
+		coeff_adr_tmp	= 0;
+		result_val_tmp	= 0;
+		result_adr_tmp	= 0;
+		result_wr_tmp	= 0;
+		sign_val_tmp	= 0;
+		sign_adr_tmp	= 0;
+		sign_wr_tmp		= 0;
+		output_ready	= 0;
+		i 				= 0;
+	}
+	
+	sfg skip{
+		// do nothing
+	}
+	
+	sfg first_loop{
+		output_i = pulse(i) * coeff_val;
+		coeff_adr_tmp = coeff_adr_tmp + 4;	// increase index of coeff buffer
+	}
+	
+	sfg second_loop{
+		output_i = output_i + pulse(i-j) * coeff_val;
+		j = j + 1;
+		coeff_adr_tmp = coeff_adr_tmp + 4;	// increase index of coeff buffer
+	}
+	
+	sfg update_vals{
+		// update counters
+		i = i + 1;	// next i
+		j = 1;		// reset j
+		
+		// update addresses
+		coeff_adr_tmp	= 0;					// reset coeff address
+		result_adr_tmp	= result_adr_tmp + 4;	// increase index of result buffer
+		sign_adr_tmp	= sign_adr_tmp + 4;		// increase index of sign buffer
+	}
+	
+	sfg write_res{
+		// eanble write permissions
+		result_wr_tmp	= 1;	
+		sign_wr_tmp		= 1;
+		
+		// save result value and its sign
+		result_val_tmp	= output_i;
+		sign_val_tmp	= output_i[31];
+	}
+	
+	sfg done{
+		output_ready = 1;
+	}
+}
+
+fsm fir_ctl(fir){
+	initial s0;
+	state s1, s2, s3, s4;
+	
+	@s0 if (input_ready) then (init) -> s1;					// start
+		else (skip) -> s0;
+		
+	@s1 if(i < 120) then (first_loop) -> s2;				// first loop condition
+		else (skip) -> s4;
+		
+	@s2 if((j < 67) & (i >= j)) then (second_loop) -> s2;	// second loop condition
+		else (write_res) -> s3;								// second loop terminated
+		
+	@s3 (update_vals) -> s1;								// update and next step
+	
+	@s4 (done) -> s4;										// finish
+}
+
+dp tb {
+	sig	in_status, out_status, res_wr, sign_wr, sign_val	:	ns (1);
+	sig coeff_val, res_val									:	tc(32);
+	sig coeff_adr ,res_adr, sign_adr						:	ns(10);
+	
+	use arm;
+	use in_ready(in_status);
+	use out_ready(out_status);
+	use in_coef(0, coeff_val, coeff_adr, 0);
+	use out_res(res_val, 0, res_adr, res_wr);
+	use out_sign(sign_val, 0, sign_adr, sign_wr);
+	use fir(in_status, coeff_val, coeff_adr, res_val, res_adr, res_wr, sign_val, sign_adr, sign_wr, out_status);	
+}
+
+system S {
+	tb;
+}

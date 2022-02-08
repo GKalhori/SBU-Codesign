@@ -1,0 +1,118 @@
+ipblock arm{
+	iptype "armsystem";
+	ipparm "exec = cordic";
+}
+
+ipblock calculator(out data : ns(1)){
+	iptype "armsystemsource";
+	ipparm "core = arm";
+	ipparm "address = 0x80000000";
+}
+
+ipblock in_theta(out data : tc(32)){
+    iptype "armsystemsource";
+    ipparm "core = arm";
+    ipparm "address=0x80000004";
+}
+
+ipblock in_itr(out data : tc(32)){
+    iptype "armsystemsource";
+    ipparm "core = arm";
+    ipparm "address = 0x80000008";
+}
+
+ipblock out_cos(in data : tc(32)){
+    iptype "armsystemsink";
+    ipparm "core = arm";
+    ipparm "address = 0x8000000C";
+}
+
+ipblock out_sin(in data : tc(32)){
+    iptype "armsystemsink";
+    ipparm "core = arm";
+    ipparm "address = 0x80000016";
+}
+
+dp cordic ( in exists : ns(1);			
+			in read_theta : tc(32);		
+			in read_itr : tc(32);		
+			out write_data_x : tc(32);
+			out write_data_y : tc(32)){
+				
+	lookup atantable : tc(32) = { 0x4000, 0x25C8, 0x13F6, 0x0A22, 
+								  0x0516, 0x028B, 0x0145, 0x00A2,   
+                                  0x0051, 0x0029, 0x0014, 0x000A,   
+								  0x0005, 0x0003, 0x0002, 0x0001 };
+							
+	reg X, Y, theta, current: tc(32);
+	reg step, iteration : tc(32);
+	reg rexists : ns(1);
+	sig cmp : ns(1);
+	reg tmp_x, tmp_y : tc(32);
+
+	always{
+		rexists = exists;
+		write_data_x = tmp_x;
+		write_data_y = tmp_y;
+	}
+	
+	sfg capture {
+		theta = read_theta;
+		iteration = read_itr;
+		X = 0x4DBA;	//this will be the cosine result, initially the magic number 0.60725293
+		Y = 0;
+		step = 0;
+		current = 0;
+	}
+
+	sfg iterate { 
+		cmp = (theta < current);
+		X = cmp ? X + (Y >> step): X - (Y >> step);
+		Y = cmp ?  Y - (X >> step): Y + (X >> step);
+		current = cmp ? current - atantable(step) : current + atantable(step);
+		step = step + 1;
+	}
+
+	sfg write {
+		tmp_x = X;
+		tmp_y = Y;
+		$display("HW => Angle ",read_theta, " with ", read_itr," iterations: cos = ", write_data_x, ", sin = ", write_data_y);
+	}
+	
+	sfg jump_over{
+		tmp_x = 0;
+		tmp_y = 0;
+    }
+}
+
+fsm cordic_controller(cordic) {
+	initial s0;
+    state s1, s2;
+
+    @s0 if (rexists == 1) then (capture) -> s1;
+        else (jump_over) -> s0;
+		
+    @s1 if (step < iteration) then (iterate) -> s1;
+		else (jump_over) -> s2;
+		
+    @s2 if (rexists == 1) then (write) -> s2;
+        else (jump_over) -> s0;
+}
+
+dp tb {
+	sig exists: ns(1);
+	sig read_theta, read_itr, write_data_x, write_data_y : tc(32);
+
+	use cordic(exists, read_theta, read_itr, write_data_x, write_data_y);
+	
+	use arm;
+	use calculator(exists);
+	use in_theta(read_theta);
+	use in_itr(read_itr);
+	use out_cos(write_data_x);
+	use out_sin(write_data_y);	
+}
+
+system S {
+	tb;
+}

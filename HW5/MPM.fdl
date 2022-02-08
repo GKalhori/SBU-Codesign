@@ -1,0 +1,300 @@
+// wordlength in the datapath
+#define WLEN 16
+
+/* encoding for data output */
+#define O_NIL 0 /* OT <- 0 */
+#define O_WR 1 /* OT <- SBUS */
+
+/* encoding for SBUS multiplexer */
+#define SBUS_R0 0 /* SBUS <- R0 */
+#define SBUS_R1 1 /* SBUS <- R1 */
+#define SBUS_R2 2 /* SBUS <- R2 */
+#define SBUS_R3 3 /* SBUS <- R3 */
+#define SBUS_R4 4 /* SBUS <- R4 */
+#define SBUS_R5 5 /* SBUS <- R5 */
+#define SBUS_R6 6 /* SBUS <- R6 */
+#define SBUS_R7 7 /* SBUS <- R7 */
+#define SBUS_IN 8 /* SBUS <- IN */
+#define SBUS_X SBUS_R0 /* don’t care */
+
+/* encoding for ALU */
+#define ALU_ACC 0 /* ALU <- ACC */
+#define ALU_PASS 1 /* ALU <- SBUS */
+#define ALU_ADD 2 /* ALU <- ACC + SBUS */
+#define ALU_SUBA 3 /* ALU <- ACC - SBUS */
+#define ALU_SUBS 4 /* ALU <- SBUS - ACC */
+#define ALU_AND 5 /* ALU <- ACC and SBUS */
+#define ALU_OR 6 /* ALU <- ACC or SBUS */
+#define ALU_NOT 7 /* ALU <- not SBUS */
+#define ALU_INCS 8 /* ALU <- SBUS + 1 */
+#define ALU_INCA 9 /* ALU <- ACC + 1 */
+#define ALU_CLR 10 /* ALU <- 0 */
+#define ALU_SET 11 /* ALU <- 1 */
+#define ALU_X ALU_ACC /* don’t care */
+#define ALU_ADDI 12 /* ALU <- ACC + Num */
+#define ALU_SUBIA 13 /* ALU <- Num - ACC */
+#define ALU_SUBAI 14 /* ALU <- ACC - Num */
+
+/* encoding for shifter */
+#define SHFT_SHL 1 /* Shifter <- shiftleft(alu) */
+#define SHFT_SHR 2 /* Shifter <- shiftright(alu) */
+#define SHFT_ROL 3 /* Shifter <- rotateleft(alu) */
+#define SHFT_ROR 4 /* Shifter <- rotateright(alu) */
+#define SHFT_SLA 5 /* Shifter <- shiftleftarithmetical(alu) */
+#define SHFT_SRA 6 /* Shifter <- shiftrightarithmetical(alu) */
+#define SHFT_NIL 7 /* Shifter <- ALU */
+#define SHFT_X SHFT_NIL /* don’t care */
+
+/* encoding for result destination */
+#define DST_R0 0 /* R0 <- Shifter */
+#define DST_R1 1 /* R1 <- Shifter */
+#define DST_R2 2 /* R2 <- Shifter */
+#define DST_R3 3 /* R3 <- Shifter */
+#define DST_R4 4 /* R4 <- Shifter */
+#define DST_R5 5 /* R5 <- Shifter */
+#define DST_R6 6 /* R6 <- Shifter */
+#define DST_R7 7 /* R7 <- Shifter */
+#define DST_ACC 8 /* IR <- Shifter */
+#define DST_NIL 15 /* not connected <- shifter */
+#define DST_X DST_NIL /* don’t care instruction */
+
+/* encoding for command field */
+#define NXT_NXT 0 /* CSAR <- CSAR + 1 */
+#define NXT_JMP 1 /* CSAR <- Address */
+#define NXT_JC 2 /* CSAR <- (carry==1)? Address : CSAR + 1 */
+#define NXT_JNC 10 /* CSAR <- (carry==0)? Address : CSAR + 1 */
+#define NXT_JZ 4 /* CSAR <- (zero==1) ? Address : CSAR + 1 */
+#define NXT_JNZ 12 /* CSAR <- (zero==0) ? Address : CSAR + 1 */
+#define NXT_X NXT_NXT
+
+/* encoding for the micro-instruction word */
+#define MI(OUT, SBUS, ALU, SHFT, DEST, NXT, ADR) \
+(OUT << 31) | \
+(SBUS << 27) | \
+(ALU << 23) | \
+(SHFT << 20) | \
+(DEST << 16) | \
+(NXT << 12) | \
+(ADR)
+
+dp control (in carry, zero : ns(1);
+			out ctl_ot : ns(1);
+			out ctl_sbus : ns(4);
+			out ctl_alu : ns(4);
+			out ctl_shft : ns(3);
+			out ctl_dest : ns(4)) {
+
+    lookup cstore : ns(32) = {
+		// 0: 1 -> R3 (counter)
+		MI(O_NIL, SBUS_X, ALU_SET, SHFT_NIL, DST_R3, NXT_NXT, 0),
+		// 1: R3 << 3 -> R3 (R3 = 8) (we have first and second number of sequence)
+		MI(O_NIL, SBUS_R3, ALU_PASS, SHFT_SHL, DST_R3, NXT_NXT, 0),
+		// 2: 1 -> R0 (first number)
+		MI(O_NIL, SBUS_X, ALU_SET, SHFT_NIL, DST_R0, NXT_NXT, 0),
+		// 3: 1 -> R1 (second number)
+		MI(O_NIL, SBUS_X, ALU_SET, SHFT_NIL, DST_R1, NXT_NXT, 0),
+		// 4: R0 -> ACC (we use ACC to add numbers)
+		MI(O_NIL, SBUS_R0, ALU_PASS, SHFT_NIL, DST_ACC, NXT_NXT, 0),
+		// 5: R1 + ACC -> R2 (result)
+		MI(O_NIL, SBUS_R1, ALU_ADD, SHFT_NIL, DST_R2, NXT_NXT, 0),
+		// 6: R1 -> R0 (next num)
+		MI(O_NIL, SBUS_R1, ALU_PASS, SHFT_NIL, DST_R0, NXT_NXT, 0),
+		// 7: R2 -> R1 (next num)
+		MI(O_NIL, SBUS_R2, ALU_PASS, SHFT_NIL, DST_R1, NXT_NXT, 0),
+		// 8: 1 -> ACC
+		MI(O_NIL, SBUS_X, ALU_SET, SHFT_NIL, DST_ACC, NXT_NXT, 0),
+		// 9: R3 - ACC -> R3 (check if 10 numbers are reched)
+		MI(O_NIL, SBUS_R3, ALU_SUBS, SHFT_NIL, DST_R3, NXT_JMP, 4),
+		// 10 Ldone: R2 -> OUT || JUMP Lstart
+		MI(O_WR, SBUS_R2, ALU_X, SHFT_X, DST_X, NXT_JMP, 10)
+    };
+
+    reg csar : ns(12);
+    sig mir : ns(32);
+    sig ctl_nxt : ns(4);
+    sig csar_nxt : ns(12);
+    sig ctl_address : ns(12);
+
+    always {
+        mir = cstore(csar);
+        ctl_ot = mir[31];
+        ctl_sbus = mir[27:30];
+        ctl_alu = mir[23:26];
+        ctl_shft = mir[20:22];
+        ctl_dest = mir[16:19];
+        ctl_nxt = mir[12:15];
+        ctl_address = mir[0:11];
+
+        csar_nxt = csar + 1;
+        csar = (ctl_nxt == NXT_NXT) ? csar_nxt :
+        (ctl_nxt == NXT_JMP) ? ctl_address :
+        (ctl_nxt == NXT_JC) ? ((carry==1) ? ctl_address : csar_nxt) :
+        (ctl_nxt == NXT_JZ) ? ((zero==1) ? ctl_address : csar_nxt) :
+        (ctl_nxt == NXT_JNC) ? ((carry==0) ? ctl_address : csar_nxt) :
+        (ctl_nxt == NXT_JNZ) ? ((zero==0) ? ctl_address : csar_nxt) :
+        csar;
+    }
+}
+
+dp regfile (in ctl_dest : ns(4);
+			in ctl_sbus : ns(4);
+			in data_in : ns(WLEN);
+			out data_out : ns(WLEN)) {
+    reg r0 : ns(WLEN);
+    reg r1 : ns(WLEN);
+    reg r2 : ns(WLEN);
+    reg r3 : ns(WLEN);
+    reg r4 : ns(WLEN);
+    reg r5 : ns(WLEN);
+    reg r6 : ns(WLEN);
+    reg r7 : ns(WLEN);
+    always {
+        r0 = (ctl_dest == DST_R0) ? data_in : r0;
+        r1 = (ctl_dest == DST_R1) ? data_in : r1;
+        r2 = (ctl_dest == DST_R2) ? data_in : r2;
+        r3 = (ctl_dest == DST_R3) ? data_in : r3;
+        r4 = (ctl_dest == DST_R4) ? data_in : r4;
+        r5 = (ctl_dest == DST_R5) ? data_in : r5;
+        r6 = (ctl_dest == DST_R6) ? data_in : r6;
+        r7 = (ctl_dest == DST_R7) ? data_in : r7;
+        data_out = (ctl_sbus == SBUS_R0) ? r0 :
+				   (ctl_sbus == SBUS_R1) ? r1 :
+				   (ctl_sbus == SBUS_R2) ? r2 :
+				   (ctl_sbus == SBUS_R3) ? r3 :
+				   (ctl_sbus == SBUS_R4) ? r4 :
+				   (ctl_sbus == SBUS_R5) ? r5 :
+				   (ctl_sbus == SBUS_R6) ? r6 :
+				   (ctl_sbus == SBUS_R7) ? r7 :
+			       r0;
+    }
+}
+
+dp alu (in ctl_alu : ns(4);
+		in sbus : ns(WLEN);
+		in acc : ns(WLEN);
+		in num : ns(4);		// ADDED TO USE AS BIT NUMBER 27-31
+		out q : ns(WLEN)) {
+    always {
+        q = (ctl_alu == ALU_ACC) ? acc :
+	        (ctl_alu == ALU_PASS) ? sbus :
+	        (ctl_alu == ALU_ADD) ? acc + sbus :
+	        (ctl_alu == ALU_SUBA) ? acc - sbus :
+	        (ctl_alu == ALU_SUBS) ? sbus - acc :
+	        (ctl_alu == ALU_AND) ? acc & sbus :
+	        (ctl_alu == ALU_OR) ? acc | sbus :
+	        (ctl_alu == ALU_NOT) ? ~sbus :
+	        (ctl_alu == ALU_INCS) ? sbus + 1 :
+	        (ctl_alu == ALU_INCA) ? acc + 1 :
+	        (ctl_alu == ALU_CLR) ? 0 :
+	        (ctl_alu == ALU_SET) ? 1 :
+	        (ctl_alu == ALU_ADDI) ? acc + num :
+	        (ctl_alu == ALU_SUBAI) ? acc - num :
+	        (ctl_alu == ALU_SUBIA) ? num - acc :
+	        0;
+    }
+}
+
+dp acc (in ctl_dest : ns(4);
+		in shift_out : ns(WLEN);
+		out q : ns(WLEN)) {
+	reg acc : ns(WLEN);
+	always {
+		acc = (ctl_dest == DST_ACC) ? shift_out : acc;
+		q = acc;
+	}
+}
+
+dp shifter (in ctl : ns(3);
+			out zero : ns(1);
+			out cy : ns(1);
+			in shft_in : ns(WLEN);
+			out so : ns(WLEN)) {
+    always {
+        so = (ctl == SHFT_NIL) ? shft_in :
+			 (ctl == SHFT_SHL) ? (ns(WLEN)) (shft_in << 1) :
+			 (ctl == SHFT_SHR) ? (ns(WLEN)) (shft_in >> 1) :
+			 (ctl == SHFT_ROL) ? (ns(WLEN)) (shft_in # shft_in[WLEN-1]) :
+			 (ctl == SHFT_ROR) ? (ns(WLEN)) (shft_in[0] # (shft_in >> 1)):
+			 (ctl == SHFT_SLA) ? (ns(WLEN)) (shft_in << 1) :
+			 (ctl == SHFT_SRA) ? (ns(WLEN)) (((tc(WLEN)) shft_in) >> 1) :
+			 0;
+        zero = (so == 0);
+        cy = (ctl == SHFT_NIL) ? 0 :
+			 (ctl == SHFT_SHL) ? shft_in[WLEN-1] :
+			 (ctl == SHFT_SHR) ? 0 :
+			 (ctl == SHFT_ROL) ? shft_in[WLEN-1] :
+			 (ctl == SHFT_ROR) ? shft_in[0] :
+			 (ctl == SHFT_SLA) ? shft_in[WLEN-1] :
+			 (ctl == SHFT_SRA) ? 0 :
+			 0;
+    }
+}
+
+dp mux_rf_in(in din : ns(WLEN);
+				in ctl_sbus : ns(4);
+				in rf_out :ns(WLEN);
+				out dout : ns(WLEN) ) {
+	always {
+		dout = (ctl_sbus == SBUS_IN) ? din : rf_out;
+	}
+}
+
+dp hmm (in din : ns(WLEN);
+		out din_strb : ns(1);
+		out dout : ns(WLEN);
+		out dout_strb : ns(1)) {
+    sig carry, zero : ns(1);
+    sig ctl_ot : ns(1);
+    sig ctl_sbus : ns(4);
+    sig ctl_alu : ns(4);
+    sig ctl_shft : ns(3);
+    sig ctl_acc : ns(1);
+    sig ctl_dest : ns(4);
+	sig num : ns(4);	// Added
+
+    sig rf_out, rf_in : ns(WLEN);
+    sig sbus : ns(WLEN);
+    sig alu_in : ns(WLEN);
+    sig alu_out : ns(WLEN);
+    sig shft_in : ns(WLEN);
+    sig shft_out : ns(WLEN);
+	sig acc_out : ns(WLEN);	// Added
+	
+    use control(carry, zero, ctl_ot, ctl_sbus, ctl_alu, ctl_shft, ctl_dest);
+    use regfile(ctl_dest, ctl_sbus, rf_in, rf_out);
+    use alu (ctl_alu, sbus, alu_in, num, alu_out);
+    use shifter(ctl_shft, zero, carry, shft_in, shft_out);
+	use acc(ctl_dest, rf_in, acc_out);	// Added
+    use mux_rf_in(din, ctl_sbus, rf_out , sbus);	// Added
+
+    always {
+        din_strb = (ctl_sbus == SBUS_IN) ? 1 : 0;
+        dout = sbus;
+        dout_strb = (ctl_ot == O_WR) ? 1 : 0; 
+        rf_in = shft_out;
+        alu_in = acc_out;	// Added
+        shft_in = alu_out;
+		num = ctl_sbus;	// Added
+    }
+}
+
+dp hmmtest {
+    sig din : ns(WLEN);
+    sig din_strb : ns(1);
+    sig dout : ns(WLEN);
+    sig dout_strb : ns(1);
+    use hmm(din, din_strb, dout, dout_strb);
+
+    reg dcnt : ns(5);
+    lookup stim : ns(WLEN) = {0};
+
+    always {
+        dcnt = (din_strb) ? dcnt + 1 : dcnt;
+        din = stim(dcnt & 7);
+        $display($cycle, $dec, " ", dout);
+    }
+}
+
+system S {
+    hmmtest;
+}
